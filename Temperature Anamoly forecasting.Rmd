@@ -1,0 +1,922 @@
+---
+title: "Temparature Anamoly - Forecasting"
+author: "Pranav Dev Kottimukkalur Ramasubramanian"
+output: html_document
+date: "2024-04-30"
+---
+# Introduction:
+
+This research investigates deviations from the average temperature reported between 1901 and 2000, stretching 1850 to 2023. Because global temperatures are such an important part of climate change talks, knowing these anomalies is critical for projecting trends and guiding environmental policy.
+
+We will use advanced statistical approaches, particularly Auto-Regressive Integrated Moving Average (ARIMA) models, to evaluate the patterns. Our approach entails loading and analyzing data, visualizing time series, performing stationarity tests such as ADF, PP, and KPSS, developing and selecting appropriate ARIMA models, and validating these models. Finally, forecasting the temperature anomalies for the next 10 years.
+
+This work seeks to provide insights that can help influence policy decisions and contribute to climate change mitigation efforts.
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+**Loading the necessary packages**
+```{r}
+library(TSA)
+library(readr)
+library(stringr)
+library(dplyr)
+library(lubridate)
+library(ggplot2)
+library(tseries)
+library(fUnitRoots)
+library(lmtest)
+library(forecast)
+```
+
+## Data Exploration
+
+The dataset is sourced from ‘Climate at a Glance | Global Time Series | National Centers for Environmental Information (NCEI)’, viewed 19 May 2024, <https://www.ncei.noaa.gov/access/monitoring/climate-at-a-glance/global/time-series/globe/land/ytd/12/1850-2023?trend=true&trend_base=10&begtrendyear=1850&endtrendyear=2023>.
+
+**Loading the data**
+
+```{r}
+setwd("D:\\PROJECTS\\Time series")
+mydata <- read.csv("temp_anomaly.csv")
+```
+
+**Having a view of the variable names**
+```{r}
+colnames(mydata)
+```
+
+**Summary of the data**
+```{r}
+summary(mydata)
+```
+
+The dataset includes monthly Global Land Temperature Anomalies in Degrees Celsius compared to the base year 1901-2000, extending from 1850 to 2023. The anomalies represent deviations from the average temperature recorded during the reference period. The dataset's mean anomaly is roughly 0.062 degrees Celsius, indicating a small global warming trend over the examined period. The anomalies range from -0.44 to 0.91 degrees Celsius, with the vast majority ranging between -0.13 and 0.23 degrees Celsius. The median anomaly is 0.00, which means that half of the observations have temperatures higher than the reference period's average, while the other half have temperatures lower than the reference period. This summary sheds emphasis on the distribution and central tendency of the temperature anomalies, emphasizing the variability and trends observed over time.
+
+
+Now the normal data is converted to a  Time-Series data for further analysis
+
+```{r}
+mydata_TS <- ts(mydata$Anomaly, start = 1850, frequency = 1)
+class(mydata_TS) # checking whether it is a time series data
+```
+A time series plot is made to understand about the data and patters while inferring the 5 valid points
+```{r}
+plot(mydata_TS, type = 'o', xlab = "Year", ylab = "Change in anomaly", main = "Time Series Plot")
+```
+
+Figure 1: Time Series plot of the temperature anomaly data
+
+
+# 5 valid points 
+
+1. **TREND:** The plot indicates an upward trend, showing a global increase in temperature anomalies. Beginning in 1910, the tendency starts to improve.
+
+2. **SEASONALITY:** No seasonality can be detected.
+
+3. **CHANGE IN VARIANCE:** The time series plot shows no change in variance. 
+
+4. **BEHAVIOR:** The graph shows auto regressive (AR) behavior with no obvious indications of moving average behavior.Successive points on the figure imply auto-regressive behavior.
+
+5. **CHANGE POINT:** There is no obvious hint of a turning point.The point near 1940 shows a spike and a fall in 1900.Still these are not significant change points
+
+
+# Inferring lag
+```{r}
+par(mfrow=c(1,1))
+plot(y=mydata_TS, x=zlag(mydata_TS), 
+     ylab="", 
+     xlab="Change in anomaly in previous year",
+     main = "Scatter plot of Change in anomaly in first lag.")
+```
+
+Figure 2: Scatter plot of Temprature anomaly in first lag
+
+
+The scatter plot depicts the relationship between the anomaly of one year and the anomaly of the preceding year.
+The graphic depicts a cluster of data points creating a diagonal trend from bottom left to top right, indicating a positive correlation between consecutive years. This means that if the anomaly is high (or low) one year, it is likely to be high (or low) the following year.
+
+
+```{r}
+y = mydata_TS # Assign the ice data to y
+x = zlag(mydata_TS) # Generate first lag of the ice series
+index = 2:length(x) # Create an index to get rid of the first NA value in x
+cor(y[index],x[index])
+```
+
+A correlation of 0.9399931 indicates a very high positive relationship, implying that knowing the anomaly in one year can be a good predictor of the anomaly in the next year.Such a strong correlation indicates that the time series data has significant autocorrelation, implying that it is not stationary and most likely contains trends and cycles that persist over time.
+
+
+# Parameteres considered for analyses:
+
+ACF Plot:
+The Autocorrelation Function (ACF) graph shows the correlation between time series and their lagged variants at various time delays. This plot aids in detecting the presence of autocorrelation in the data, indicating that previous values have a linear connection with future values.
+
+PACF Plot:
+The Partial Autocorrelation Function (PACF) plot displays the correlation between the series and its lags that cannot be explained by preceding lags. It is useful in determining the order of autoregressive (AR) terms in an ARIMA model.
+
+EACF Plot:
+The Extended Autocorrelation Function (EACF) plot is used to determine the proper ARIMA model order, with zeros indicating that a model with a specific combination of AR and MA terms appropriately describes the data's correlation structure. It aids in determining the complexity of the required model by displaying the cut-off point for significant autoregressive and moving average components.
+
+BIC Plot:
+The Bayesian Information Criterion (BIC) is a model selection criterion that uses the likelihood function to punish models depending on their number of parameters. Lower BIC values imply a better model balance between fit and complexity, which often results in more resilient and efficient models.
+
+QQ Plot:
+The Quantile-Quantile (QQ) plot is a graphical tool for determining if a dataset follows a specific distribution, typically the normal distribution. In this graphic, the data quantiles are displayed against the theoretical quantiles, with deviations from the line indicating departures from the normal distribution.
+
+Shapiro-Wilk Test:
+The Shapiro-Wilk test determines the normality of a distribution in a sample. A significant test result p value is taken. If the p value is less than 0.05, the null hypothesis is rejected.
+Null Hypothesis (HO): Normal distribution
+Alternate Hypothesis(HA): Not normal distribution
+
+# Unit root tests performed:
+
+ADF test: The Augmented Dickey-Fuller (ADF) test detects the presence of a unit root in a series, which aids in the identification of non-stationarity in time series data.
+
+Null Hypothesis (HO): Series is non-stationary
+Alternate Hypothesis(HA): Series is stationary
+
+Conditions to Reject Null Hypothesis(HO)
+If p-value < 0.05 – Reject Null Hypothesis(HO) meaning it is stationary.
+
+
+PP test: The Phillips-Perron (PP) test is used to look for a unit root in a series while accounting for any serial correlation and heteroscedasticity in the error terms, making it resistant to many types of serial correlation.
+
+Null Hypothesis (HO): Series is non-stationary
+Alternate Hypothesis(HA): Series is stationary
+
+Conditions to Reject Null Hypothesis(HO)
+If p-value < 0.05 – Reject Null Hypothesis(HO) meaning it is stationary.
+
+KPSS test: The Kwiatkowski-Phillips-Schmidt-Shin (KPSS) test determines if a time series is trend-stationary, which means it is stationary around a deterministic trend rather than a unit root.
+
+Null Hypothesis (HO): Series is stationary
+Alternate Hypothesis(HA): Series is non-stationary
+
+Conditions to Fail to Reject Null Hypothesis(HO)
+If p-value < 0.05 – Fail to Reject Null Hypothesis(HO) meaning it is stationary.
+
+# ACF and PACF plot study
+```{r}
+par(mfrow=c(1,2))
+acf(mydata_TS, main ="ACF plot of Anamoliles.")
+pacf(mydata_TS, main ="PACF plot of anomalies.")
+par(mfrow=c(1,1))
+```
+Figure 3: ACF and PACF plots of the temperature anomalies
+
+![](D:/RMIT/MC242_Master of Analytics/THIRD SEMESTER/TIME SERIES ANALYSIS/Assignment 2/image/1.png)
+
+Image 1 : Analysis of ACF and PACF
+
+
+
+The ACF plot demonstrates considerable autocorrelation for various lags, which gradually decreases (decays) as the delays increase.This lengthy tail in the ACF indicates a long memory process, implying that the data is influenced by its previous values over an extended period. This pattern implies a **non-stationary** series.
+
+The PACF plot reveals a big spike at lag 1 and then cuts off, with no subsequent lags being significant, indicating that this is a **non-stationary** series.
+
+
+Further unit tests are conducted to confirm the stationarity
+
+```{r}
+adf.test(mydata_TS)
+```
+The p-value is significantly greater than 0.05. We fail to reject the null hypothesis. We do not have enough evidence to prove the series is stationary. This means that the series is **non-stationary**
+
+```{r}
+pp.test(mydata_TS)
+```
+The p-value is significantly greater than 0.05. We fail to reject the null hypothesis. We do not have enough evidence to prove the series is stationary. This means that the series is **non-stationary**
+
+
+```{r}
+kpss.test(mydata_TS)
+```
+The p-value is less than 0.05. We reject the null hypothesis. We do not have enough evidence to prove the series is stationary. This means that the series is **non-stationary**
+
+Checking normality by the QQ-plot and the Shapiro Wilk test
+```{r}
+qqnorm(mydata_TS)
+qqline(mydata_TS, col = 2)
+```
+
+Figure 4: QQ Plot of the temparature anomalies data
+
+The Normal Q-Q plot shows that the data is not completely normally distributed. While the core values closely match the predicted quantiles of a normal distribution, considerable departures in the tails, particularly at the upper end, indicate the presence of outliers and heavy tails. These traits indicate that the data is not distributed normally.
+
+
+```{r}
+shapiro.test(mydata_TS)
+
+```
+In the Shapiro-Wilk test, the null hypothesis states that the anomalies are not normally distributed i.e if the p-value is less than 0.05, then the null hypothesis is rejected. This means the data is not normally distributed.
+
+# Transformation
+
+The Box-Cox transformation is used on the data seeks to stabilize variance and make the distribution more symmetric and closer to normal. To address skewness and non-constant variance in the temperature anomaly data, the transformation modifies the scale and spacing of data points. This is critical for making the data more suitable for linear models and statistical tests that presume normalcy, hence increasing the reliability and accuracy of subsequent analyses and projections.
+
+```{r}
+#BC = BoxCox.ar(mydata_TS)
+
+```
+
+
+Since this technique only works when data values are positive, any negative values in the time series must be adjusted. Because the Box-Cox transformation does not apply to zero or negative values, we shift the series to ensure that all values are positive by adding the absolute value of the minimum data value plus a tiny constant (0.01).
+
+
+```{r warning=FALSE}
+mydata_TS2 <- mydata_TS + abs(min(mydata_TS)) + 0.01 # Adding the absolute value and constant
+BC <- BoxCox.ar(y=mydata_TS2, lambda=seq(-2, 2, 0.01)) # setting the lambda limits
+
+```
+Figure 5: Box-Cox transformation
+
+
+### Viewing the confidence interval of the lambda parameter estimated from the Box-Cox transformation.
+
+```{r}
+BC$ci
+```
+
+
+### Viewing the lambda value
+```{r}
+lambda <- BC$lambda[which(max(BC$loglike) == BC$loglike)]
+lambda
+```
+
+### Plotting the transformed data for analysis:
+```{r}
+mydataBC = (mydata_TS2^lambda-1)/lambda
+plot(mydataBC,type='o',ylab='anomaly', main = " Time series plot of BC transformed
+     anomaly.")
+```
+
+Figure 6: Time series plot of Box-Cox transformed anomaly data
+
+The transformation may have changed the scale, but not the overall pattern of data. The increasing trend of converted anomalies corresponds to global warming trends recorded in climate research, which demonstrate an overall increase in Earth's average temperatures and is similar to the original time series data.
+
+
+
+## Performing Unit tests for Stationarity check
+
+```{r}
+adf.test(mydataBC)
+```
+
+The p-value is significantly greater than 0.05. We fail to reject the null hypothesis. We do not have enough evidence to prove the series is stationary. This means that the series is **non-stationary**
+
+```{r}
+pp.test(mydataBC)
+```
+
+The p-value is significantly greater than 0.05. We fail to reject the null hypothesis. We do not have enough evidence to prove the series is stationary. This means that the series is **non-stationary**
+
+```{r}
+kpss.test(mydataBC)
+```
+
+The p-value is less than 0.05. We reject the null hypothesis. We do not have enough evidence to prove the series is stationary. This means that the series is **non-stationary**
+
+
+```{r}
+qqnorm(mydataBC, main = "Normal Q-Q Plot for the Box-Cox transformed anomalies series.")
+qqline(mydataBC, col = 2)
+
+```
+
+Figure 7: QQ plot of Box-Cox transformed anomaly data
+
+The normal QQ plot also looks similar to the original time series data with a lot of outliers and not aligning to follow normal distribution.
+```{r}
+
+shapiro.test(mydataBC)
+
+```
+
+In the Shapiro-Wilk test, the null hypothesis states that the anomalies are not normally distributed i.e if the p-value is less than 0.05, then the null hypothesis is rejected. This means the data is not normally distributed.
+
+
+```{r}
+par(mfrow=c(1,2))
+acf(mydataBC, main ="ACF plot of the transformed series.")
+pacf(mydataBC, main ="PACF plot of the transformed series.")
+```
+
+Figure 8: ACF and PACF plot of Box-Cox transformed anomaly data
+
+### Inference:
+
+Based on a complete analysis of both the original time series data and the results obtained after applying the Box-Cox transformation, it is clear that the transformation did not result in significant improvements. The major goals of variance stabilization and distribution normalization were not met. The comparison of plots and statistical tests before and after the transformation shows that there is no significant variation in data properties. This is also supported by the ACF and PACF plots which are very similar and provide unsatisfying results against stationarity. Given these findings, it is plausible to infer that the Box-Cox transformation does not improve the dataset. As a result, we will skip any additional changes of this kind and instead focus on using differencing approaches, which may better handle non-stationarity and prepare the data for more effective time series modeling.
+
+
+# Differencing
+
+Differencing is a popular data transformation technique used in time series analysis to render a series stationary, which is required by many forecasting approaches, particularly ARIMA models. The method entails subtracting the current value of the time series from its previous value. This can help eliminate trends or seasonal patterns, allowing the mean of the time series to remain stable over time. By differencing the data, we hope to reduce or eliminate autocorrelation and ensure that the series' features do not depend on the time at which it is seen, hence improving the accuracy and validity of future analysis.
+
+### First Differencing:
+
+```{r}
+mydata_diff <- diff(mydata_TS, differences = 1)
+par(mar=c(5,6,4,1)+.1)
+plot(mydata_diff, type="o", xlab="Year",
+     ylab="Change in anomaly",
+     main="Time series plot of first differenced Anomaly series.")
+
+```
+
+Figure 9: Time series plot of first differenced Anomaly series
+
+The time series plot of the first differenced anomaly series reveals numerous important properties. 
+
+-> First, the differencing procedure appears to stabilize the mean around zero, which is a desirable attribute for stationary time series data, even while the variance is not exactly constant and does not show clear patterns of change, implying enhanced stationarity overall.
+
+
+-> Unlike the original time series data, this differenced series shows no evident long-term trend, showing that the principal non-stationarity—likely a trend component in the original data—was successfully handled by the differencing procedure. The lack of a trend, combined with a stable mean, makes the series stationary
+
+**Generating ACF and PACF plots to further check for stationarity**
+
+```{r}
+par(mfrow=c(1,2))
+acf(mydata_diff, main ="ACF plot of temp anomaly series.")
+pacf(mydata_diff, main ="PACF plot of temp anomaly series.")
+```
+
+Figure 10: ACF and PACF plot of first differenced Anomaly series
+
+
+There is no indication of seasonality. Below is the comparison of the ACF and PACF of the differenced data and raw time series data for better understanding.
+
+```{r}
+par(mfrow=c(1,2))
+
+acf(mydata_TS, main ="ACF of temp anomaly time series")
+acf(mydata_diff, main ="ACF of temp anomaly diff series")
+```
+
+Figure 11: Comparison of ACF plots
+
+
+There is no gradual decay in the first differenced ACF plot. While the ACF of the raw time series data is showing gradual decay. This shows that the first differenced time series is **stationary** according to the ACF plot.
+```{r}
+par(mfrow=c(1,2))
+pacf(mydata_TS, main ="PACF of temp anomaly time series")
+pacf(mydata_diff, main ="PACF of temp anomaly diff series")
+
+```
+
+Figure 12: Comparison of PACF plots
+
+
+The PACF of first differenced series plot reveals a small spike at lag 1. But the PACF value is less than half the PACF value which can be seen in the PACF of raw time series data as the lags increase. This also shows that the first differenced series performs better and is **stationary** according to the PACF plot.
+
+## Unit tests:
+
+**ADF test**
+```{r}
+adf.test(mydata_diff)
+```
+
+The p-value is less than 0.05. We reject the null hypothesis. We  have enough evidence to prove the series is stationary. This means that the first differenced series is **stationary**
+
+**PP test**
+
+```{r}
+pp.test(mydata_diff)
+```
+
+The p-value is less than 0.05. We reject the null hypothesis. We  have enough evidence to prove the series is stationary. This means that the first differenced series is **stationary**
+
+**KPSS test**
+```{r}
+kpss.test(mydata_diff)
+```
+
+The p-value is greater than 0.05. We fail to reject the null hypothesis. We  have enough evidence to prove the series is stationary. This means that the first differenced series is **stationary**
+
+## Model specification
+
+**ACF and PACF plots**
+
+Displaying ACF and PACF plots to identify the order of the AR and MA components necessary for ARIMA modeling.
+```{r}
+par(mfrow=c(1,2))
+acf(mydata_diff, main ="ACF plot")
+pacf(mydata_diff, main ="PACF plot")
+```
+
+Figure 13: ACF and PACF for counting p and q
+
+![](D:/RMIT/MC242_Master of Analytics/THIRD SEMESTER/TIME SERIES ANALYSIS/Assignment 2/image/2.png)
+
+Image 2 : Determining p and q values
+
+Determining q (From ACF):
+
+There is one significant lag (2nd lag) that protrudes beyond the levels [q=1].
+While looking into the 4th lag, it touches the level. So even this can be considered [q=2].
+The other lags which are beyond the levels are considered late lags and are omitted.
+So q = 1,2
+
+Determining p (From PACF):
+
+There is one signinficant lag (2nd lag) that clearly passes iver the levels [p=1].
+All other lags can be considered as late lags.
+So p = 1.
+
+Possible models:
+
+ARIMA (1,1,1)
+ARIMA (1,1,2)
+
+**EACF**
+
+The Extended Autocorrelation Function (EACF) is a time series analysis tool that assists in determining the proper ordering for autoregressive integrated moving average (ARIMA) models. 
+This calculates the sample extended acf (ESACF) for the time series stored in z. The EACFM matrix contains the AR order up to ar.max and the MA order up to ma.max from ESACF.
+
+```{r}
+eacf(mydata_diff, ar.max = 5, ma.max = 5)
+```
+Figure 14: EACF diagram
+
+
+![](D:/RMIT/MC242_Master of Analytics/THIRD SEMESTER/TIME SERIES ANALYSIS/Assignment 2/image/3.png)
+
+Image 3 : EACF p and q
+
+Possible Models:
+
+ARIMA (0,1,2)
+ARIMA (0,1,3)
+ARIMA (1,1,2)
+ARIMA (1,1,3)
+
+**BIC plot**
+
+The BIC plot is a useful tool for model selection in time series analysis.
+The Bayesian Information Criterion is a criterion that balances model complexity with goodness of fit. The graph depicts the BIC values for different model settings.
+The plot's darker hues (or lower y-axis positions) reflect lower BIC values. A lower BIC value suggests a better model fit.
+
+Each column represents a separate model parameter.The shade indicates the BIC value for each model configuration.
+
+
+```{r warning=TRUE}
+res = armasubsets(y=mydata_diff, nar=5, nma=5, y.name='p', ar.method='ols')
+plot(res)
+```
+
+Figure 15: BIC Plot
+
+From this plot, the p values can be inferred by looking into the dark shaded in the p-lag columns and q values from the error-lag columns
+
+p values = 1,2
+q values = 0,1,4
+
+Possible models:
+
+ARIMA (1,1,0)
+ARIMA (1,1,1)
+ARIMA (1,1,4)
+ARIMA (2,1,0)
+ARIMA (2,1,1)
+ARIMA (2,1,4)
+
+**Overall models**
+
+The Selected models:
+ARIMA (1,1,1)
+ARIMA (1,1,2)
+ARIMA (0,1,2)
+ARIMA (0,1,3)
+ARIMA (1,1,2)
+ARIMA (1,1,3)
+ARIMA (1,1,0)
+ARIMA (1,1,1)
+ARIMA (1,1,4)
+ARIMA (2,1,0)
+ARIMA (2,1,1)
+ARIMA (2,1,4)
+
+Common models:
+ARIMA (1,1,1)
+ARIMA (1,1,2)
+
+Possible Models:
+ARIMA (1,1,1)
+ARIMA (0,1,2)
+ARIMA (0,1,3)
+ARIMA (1,1,2)
+ARIMA (1,1,3)
+ARIMA (1,1,0)
+ARIMA (1,1,4)
+ARIMA (2,1,0)
+ARIMA (2,1,1)
+ARIMA (2,1,4)
+
+Two of the models namely, ARIMA (1,1,1) and ARIMA (1,1,2) were common among the possible models. There is a slight chance that they may be a better fit. But nothing can be inferred without performing testing and further analyses.
+
+## Model Fitting
+
+Arima() tests were run using ML and CSS, and CSS-ML was used to validate where there was misinterpretation.
+These tests determine the significance of the coefficients.
+
+
+## Parameter estimation:
+
+**ARIMA (1,1,1)**
+```{r}
+model_111_ml = Arima(mydata_TS,order=c(1,1,1),method='ML')
+coeftest(model_111_ml)
+
+model_111_css = Arima(mydata_TS,order=c(1,1,1),method='CSS')
+coeftest(model_111_css)
+```
+Based on the above methods, ARIMA (1,1,1) has all the coefficients significant in both ML and CSS tests. Therefore this models proves to be a **good model**.
+
+**ARIMA(0,1,2)**
+```{r}
+model_012_ml = Arima(mydata_TS,order=c(0,1,2),method='ML')
+coeftest(model_012_ml)
+
+model_012_css = Arima(mydata_TS,order=c(0,1,2),method='CSS')
+coeftest(model_012_css)
+```
+Based on the above methods, ARIMA (0,1,2) has all the coefficients significant in both ML and CSS tests. Therefore this models proves to be a **good model**.
+
+**ARIMA(0,1,3)**
+```{r}
+model_013_ml = Arima(mydata_TS,order=c(0,1,3),method='ML')
+coeftest(model_013_ml)
+
+model_013_css = Arima(mydata_TS,order=c(0,1,3),method='CSS')
+coeftest(model_013_css)
+
+model_013_ml_css = Arima(mydata_TS,order=c(0,1,3),method='CSS-ML')
+coeftest(model_013_ml_css)
+```
+The above results showed that ARIMA (0,1,3) has only ma2 as significant while other two are insignificant. This is also verified using the CSS-ML estimation and has shown consistent results. Therefore this is not a good model.
+
+**ARIMA(1,1,2)**
+```{r}
+model_112_ml = Arima(mydata_TS,order=c(1,1,2),method='ML')
+coeftest(model_112_ml)
+
+model_112_css = Arima(mydata_TS,order=c(1,1,2),method='CSS')
+coeftest(model_112_css)
+
+model_112_ml_css = Arima(mydata_TS,order=c(1,1,2),method='CSS-ML')
+coeftest(model_112_ml_css)
+```
+The above results show that ARIMA (1,1,2) has only ma2 as significant coefficient while other two are insignificant. This is also verified using the CSS-ML estimation and has shown consistent results. Therefore this is not a good model.
+
+**ARIMA(1,1,3)**
+```{r}
+model_113_ml = Arima(mydata_TS,order=c(1,1,3),method='ML')
+coeftest(model_113_ml)
+
+model_113_css = Arima(mydata_TS,order=c(1,1,3),method='CSS')
+coeftest(model_113_css)
+
+model_113_ml_css = Arima(mydata_TS,order=c(1,1,3),method='CSS-ML')
+coeftest(model_113_ml_css)
+```
+
+Based on the above methods, ARIMA (1,1,3) has all the coefficients significant in both ML and CSS estimations. Therefore this models proves to be a **good model**.
+
+**ARIMA(1,1,0)**
+```{r}
+model_110_ml = Arima(mydata_TS,order=c(1,1,0),method='ML')
+coeftest(model_110_ml)
+
+model_110_css = Arima(mydata_TS,order=c(1,1,0),method='CSS')
+coeftest(model_110_css)
+
+```
+The above result shows that the only coefficient the ARIMA(1,1,0) has is also not significant. Therefore we can infer that the model is not a good model.
+
+**ARIMA(1,1,4)**
+```{r}
+model_114_ml = Arima(mydata_TS,order=c(1,1,4),method='ML')
+coeftest(model_114_ml)
+
+model_114_css = Arima(mydata_TS,order=c(1,1,4),method='CSS')
+coeftest(model_114_css)
+
+model_114_ml_css = Arima(mydata_TS,order=c(1,1,4),method='CSS-ML')
+coeftest(model_114_ml_css)
+```
+The ML results showed one coefficient (ma2) which is significant coefficien and a coefficient of which it did not have a provable significance (ma3) and there is a doubt in that.All other coefficients are not significant. This is checked by CSS estimation which showed a different doubtable coefficient (ma4). This is checked by the CSS-ML model which aligns with this. There is no consistency and there are many insignificant coefficients in this model. This proves to be a bad model.
+
+**ARIMA(2,1,0)**
+```{r} 
+model_210_ml = Arima(mydata_TS,order=c(2,1,0),method='ML')
+coeftest(model_210_ml)
+
+model_210_css = Arima(mydata_TS,order=c(2,1,0),method='CSS')
+coeftest(model_210_css)
+
+```
+The above results (both ML and CSS) show that ARIMA (2,1,0) has only ar2 as significant coefficient while other is insignificant. Therefore this is not a good model.
+
+**ARIMA(2,1,1)**
+```{r}
+model_211_ml = Arima(mydata_TS,order=c(2,1,1),method='ML')
+coeftest(model_211_ml)
+
+model_211_css = Arima(mydata_TS,order=c(2,1,1),method='CSS')
+coeftest(model_211_css)
+
+model_211_ml_css = Arima(mydata_TS,order=c(2,1,1),method='CSS-ML')
+coeftest(model_211_ml_css)
+```
+The above results show that ARIMA (2,1,1) has only ar2 as significant coefficien while other two are insignificant. This is also verified using the CSS-ML estimation and has shown consistent results. Therefore this is not a good model.
+
+**ARIMA(2,1,4)**
+```{r} 
+model_214_ml = Arima(mydata_TS,order=c(2,1,4),method='ML')
+coeftest(model_214_ml)
+
+model_214_css = Arima(mydata_TS,order=c(2,1,4),method='CSS')
+coeftest(model_214_css)
+
+model_214_ml_css = Arima(mydata_TS,order=c(2,1,4),method='CSS-ML')
+coeftest(model_214_ml_css)
+```
+
+The above results show that ARIMA (2,1,4) has no significant coefficients. This is also verified using the CSS-ML estimation and has shown consistent results. Therefore this is not a good model.
+
+**Inference from ML and CSS:**
+
+Based on all the above results, three models seem to be better ones. Those are:
+
+ARIMA (1,1,1)
+ARIMA (0,1,2)
+ARIMA (1,1,3)
+
+## Goodness of fit metrics:
+
+Goodness-of-fit metrics like the Akaike Information Criterion (AIC), Bayesian Information Criterion (BIC), and Error metrics are critical for assessing the performance of statistical models, particularly during model selection and validation.
+
+The smaller the values, the better the model is.
+
+### AIC and BIC
+
+This sort.score function is referred from the course content (Canvas)
+```{r}
+sort.score <- function(x, score = c("bic", "aic")){
+  if (score == "aic"){
+    x[with(x, order(AIC)),]
+  } else if (score == "bic") {
+    x[with(x, order(BIC)),]
+  } else {
+    warning('score = "x" only accepts valid arguments ("aic","bic")')
+  }
+}
+```
+
+### AIC
+
+The AIC analyzes a model's quality of fit while penalizing for the number of parameters. It seeks to prevent overfitting by inserting a penalty term based on model complexity.
+
+```{r}
+sort.score(AIC(model_111_ml,model_012_ml,model_013_ml,model_112_ml,model_113_ml,model_110_ml,model_114_ml,model_210_ml,model_211_ml,
+               model_214_ml), score = "aic")
+
+```
+
+Table 1: AIC results
+
+Based on the AIC, ARIMA (1,1,3) proves to be the best followed by ARIMA (2,1,0)
+
+### BIC
+
+Similar to the AIC, the BIC assesses a model's quality of fit while accounting for the number of parameters. However, BIC charges a higher penalty for model complexity, making it more severe when dealing with complicated models.
+ 
+```{r}
+sort.score(BIC(model_111_ml,model_012_ml,model_013_ml,model_112_ml,model_113_ml,model_110_ml,model_114_ml,model_210_ml,model_211_ml,
+               model_214_ml), score = "bic")
+```
+
+Table 2: BIC results
+
+
+Based on the BIC, ARIMA (2,1,0) proves to be the best followed by ARIMA (0,1,2)
+
+**Suggested models from AIC and BIC**
+
+ARIMA (1,1,3)
+ARIMA (2,1,0)
+
+Further analysis is done using the error metrics. The condition here is also to lower the errors.
+
+## Error metrics:
+
+Seven error metrics have been considered here namely:
+ME - Mean Error
+
+RMSE - Root Mean Squared Error
+
+MAE - Mean Absolute Error
+
+MPE - Mean Percentage Error
+
+MAPE - Mean Absolute Percentage Error
+
+MASE - Mean Absolute Scaled Error
+
+ACF1 - Autocorrelation of Residuals at Lag 1
+
+
+Each of these metrics provide valuable insights into different aspects of model performance and accuracy.
+
+```{r}
+
+Smodel_210_css <- accuracy(model_210_css)[1:7]
+Smodel_211_css <- accuracy(model_211_css)[1:7]
+Smodel_012_css <- accuracy(model_012_css)[1:7]
+Smodel_114_css <- accuracy(model_114_css)[1:7]
+Smodel_013_css <- accuracy(model_013_css)[1:7]
+Smodel_112_css <- accuracy(model_112_css)[1:7]
+Smodel_113_css <- accuracy(model_113_css)[1:7]
+Smodel_214_css <- accuracy(model_214_css)[1:7]
+Smodel_111_css <- accuracy(model_111_css)[1:7]
+Smodel_110_css <- accuracy(model_110_css)[1:7]
+
+
+
+df.Smodels <- data.frame(
+  rbind(Smodel_210_css,Smodel_211_css,Smodel_012_css,Smodel_114_css,Smodel_013_css,
+        Smodel_112_css,Smodel_013_css,Smodel_214_css,Smodel_111_css,Smodel_110_css)
+)
+colnames(df.Smodels) <- c("ME", "RMSE", "MAE", "MPE", "MAPE", 
+                          "MASE", "ACF1")
+rownames(df.Smodels) <- c("ARIMA(2,1,0)","ARIMA(2,1,1)", "ARIMA(0,1,2)","ARIMA(1,1,4)","ARIMA(0,1,3)",
+                         "ARIMA(1,1,2)", "ARIMA(1,1,3)","ARIMA(2,1,4)","ARIMA(1,1,1)","ARIMA(1,1,0)")
+round(df.Smodels,  digits = 3)
+```
+
+Table 3: Error metrics results
+
+**Suggested models from error metrics**
+
+Out of these seven, MPE and MAPE have NaN and Infinite values, Therefore these two metrics are omitted.
+
+Below are the models with least errors in each of the 5 remaining metrics
+```{r}
+
+error_metrics <- data.frame(
+  `ErrorMetric` = c("ME", "RMSE", "MAE", "MASE", "ACF1"),
+  `Models` = c("ARIMA(1,1,0)",
+                 "ARIMA(1,1,4) and ARIMA(2,1,4)",
+                 "ARIMA(2,1,0) and ARIMA(2,1,4)",
+                 "ARIMA(2,1,0)",
+                 "ARIMA(2,1,0)"),
+  Values = c(0.005,0.084,0.062,0.867, -0.042)
+)
+print(error_metrics)
+```
+Table 4: Error metric analysis table
+
+Based on this analysis, we can draw the inference that ARIMA(2,1,0) is better based on the error metrics as it has most number of least error values,
+followed by ARIMA(2,1,4)
+
+## Concluding the best model
+
+Based on all the analysis performed, these are the best models based on different criteria:
+These values are just displayed for better understanding based on the results above
+```{r}
+models_criteria <- data.frame(
+  "Criteria" = c("ML and CSS", "AIC","BIC","Error Metrics"),
+  "Models" = c("ARIMA (1,1,1),  ARIMA (0,1,2),  ARIMA (1,1,3)","ARIMA (1,1,3)", "ARIMA (2,1,0)", "ARIMA (2,1,0)")
+)
+models_criteria
+```
+
+Table 5: Overall analysis table
+
+
+## Model Selection Analysis:
+
+Upon thorough evaluation of the results derived from our time series analysis, two models prominently emerged as superior: 
+ARIMA(2,1,0) and ARIMA(1,1,3). 
+
+Each model has various characteristics that should be taken into account when determining the best fit to data on global land temperature anomalies from 1850–2023.
+
+**Comparative Analysis of Model Features**
+
+**ARIMA(2,1,0) Highlights:**
+
+Error Metrics: This model outperforms numerous error metrics, registering the lowest values in three major measurements, highlighting its ability to accurately capture data patterns.
+
+BIC Performance: It stands out clearly in the Bayesian Information Criterion test, indicating that it balances model complexity and goodness of fit better than other models.
+
+AIC Performance: The model also does well in the Akaike Information Criterion test, ranking second best, indicating its efficiency in model parsimony while maintaining a high level of accuracy.
+
+**ARIMA(1,1,3) Highlights:**
+
+AIC Leadership: This model leads the Akaike Information Criterion test, indicating its superior capacity to explain data variability with fewer parameters, implying a high level of model efficiency.
+
+Competitive BIC Values: Although not the greatest performer in the Bayesian Information Criterion, its numbers are relatively close to the best, demonstrating its competence in model fitting without excessive complexity.
+
+**Final Model Selection Justification**
+
+Based on the comprehensive analysis, the selection of **ARIMA(1,1,3)** as the optimal model is justified by the following considerations:
+
+**Significance of Coefficients:** Unlike ARIMA(2,1,0), which has an insignificant coefficient that might compromise its predictive integrity, all coefficients of ARIMA(1,1,3) are significant, as demonstrated by both the Maximum Likelihood (ML) and Conditional Sum of Squares (CSS) tests.
+
+**Error Metrics Assessment:** Although ARIMA(1,1,3) does not clearly lead in all error metrics, it consistently performs near the lowest values measured. This proximity suggests that the model works well across a variety of metrics, resulting in a consistent and robust fit to the data.
+
+The red-highlighted points represent the lowest in each category. The green highlighted model is the ARIMA(1,1,3). The values are close to the lowest values.
+
+![](D:/RMIT/MC242_Master of Analytics/THIRD SEMESTER/TIME SERIES ANALYSIS/Assignment 2/image/4.png)
+
+Image 4 : Error metrics evaluation
+
+**Overall Assessment:**
+
+The model not only performs well in statistical tests, but it also has competitive error rates throughout, making it an excellent choice for forecasting and analysis.
+
+Given these characteristics, **ARIMA(1,1,3)** is chosen as the best-fitting model for assessing temperature anomalies. Its comprehensive capacity to effectively model the data without overfitting, while keeping significant coefficients and competitive error metrics, is consistent with the goals of delivering exact forecasts and insights for policymaking and scientific research on climate variability and change.
+
+
+### Overparameterised models for ARIMA(1,1,3) are ARIMA(2,1,3) and ARIMA(1,1,4)
+
+```{r}
+model_213_ml = Arima(mydata_TS,order=c(2,1,3),method='ML')
+coeftest(model_213_ml)
+
+model_213_css = Arima(mydata_TS,order=c(2,1,3),method='CSS')
+coeftest(model_213_css)
+
+```
+```{r}
+model_114_ml = Arima(mydata_TS,order=c(1,1,4),method='ML')
+coeftest(model_114_ml)
+
+model_114_css = Arima(mydata_TS,order=c(1,1,4),method='CSS')
+coeftest(model_114_css)
+
+```
+**Evaluation of Overparameterized Models**
+In our attempt to improve the ARIMA(1,1,3) model, we tested ARIMA(2,1,3) and ARIMA(1,1,4) to see if adding more terms improved predicting accuracy. Our findings showed that these models did not increase performance; in fact, including more autoregressive and moving average terms resulted in some statistically insignificant coefficients. This lack of significance implies that the increased complexity may result in overfitting, which could mask true data links and diminish model efficacy.
+
+The analysis of overparameterized models reveals no improvement in model performance, confirming the potential downsides of greater complexity. As a result, we advise against using more sophisticated versions of the ARIMA(1,1,3) model. The simplicity and full relevance of the coefficients in ARIMA(1,1,3) make it the best choice for studying temperature anomalies. It strikes the ideal balance between accuracy and model parsimony, making it successful for predicting tasks while avoiding overfitting. The robustness and durability of this model make it suitable for application in environmental research and policymaking, giving dependable insights into climate patterns. Hence, we strongly support the ARIMA(1,1,3) model as the best fit for our data.
+
+
+
+## Forecasting
+
+```{r}
+library(forecast)
+
+# Fitting the ARIMA(1,1,3) model
+final_model <- Arima(mydata_TS, order = c(1,1,3), method = "ML")
+
+# Forecasting future values for the next 10 years
+future_anomalies <- forecast(final_model, h = 10)
+
+
+future_anomalies$mean <- round(future_anomalies$mean, 2)
+future_anomalies$lower <- round(future_anomalies$lower, 2)
+future_anomalies$upper <- round(future_anomalies$upper, 2)
+
+
+print(future_anomalies)
+```
+
+Generating forecasts for the future using the fitted ARIMA(1,1,3) model is the forecasting process. This model is used to forecast values for the next ten years and was trained using historical time series data. The code rounds the mean, lower, and upper bounds of the predicted values to two decimal places for clarity after creating the forecasts. The time series data's anticipated values offer insight into prospective future patterns.
+
+**Inference**
+
+Point forecasts and associated confidence intervals (CI) at the 80% and 95% levels are shown for the years 2024 through 2033 in the data that is provided. The predicted future values of the time series are shown by the point forecasts. The range within which the true future values are anticipated to lie with a certain degree of confidence is provided by the lower and upper bounds of the confidence intervals.
+
+The forecasted future value of the time series is represented by each point forecast, and the range within which the true future values are expected to fall with a given degree of confidence is shown by the lower and upper bounds of the confidence intervals.
+
+The broader intervals show the growing uncertainty as the forecasting horizon moves forwards. The point projection indicates that the time series will have a value of 0.88 in 2024, with a 95% confidence interval ranging from 0.71 to 1.05. The 80% confidence interval spans from 0.77 to 0.99. This suggests a high degree of confidence within a relatively small range of probable values. On the other hand, the point projection for 2033 has broader confidence ranges and stays at 0.78. The 95% range runs from 0.47 to 1.10, and the 80% interval from 0.58 to 0.99, suggesting that the future direction of the time series is less definite. When making decisions, these forecasts and intervals offer insightful information about prospective future trends while taking the degree of uncertainty into account.
+
+
+```{r}
+plot(future_anomalies, main = "Forecast of Temperature Anomalies")
+```
+
+
+This graph illustrates the forecast of temperature anomalies from 1850 through 2023 and projects into the future. The historical data shows a rising trend in temperature anomalies, particularly noticeable from the mid-20th century onwards. The forecasted period, shaded in blue, indicates the expected range of anomalies moving forward, with the shaded area representing the confidence intervals around the forecast.
+
+
+## Conclusion:
+
+The primary objective of this research was to identify the most suitable ARIMA model for forecasting temperature anomalies from 1850 to 2023, and then to utilize this model to predict future trends. Through extensive time series analysis, we evaluated several ARIMA configurations, focusing on their statistical significance, error metrics, and goodness-of-fit measures to determine the most effective model.
+
+The ARIMA(1,1,3) model emerged as the best-fit model after a comprehensive analysis involving tests for stationarity, parameter significance, and model accuracy. This model not only showed superior performance in fitting the historical data but also maintained a balance between model complexity and predictive power, as indicated by its robust performance in both the Akaike Information Criterion (AIC) and Bayesian Information Criterion (BIC).
+
+Using the ARIMA(1,1,3) model, we forecasted temperature anomalies for the next decade. These forecasts indicate a probable increase in temperature anomalies, reflecting ongoing global warming trends. This insight is critical for policymakers and environmental scientists as it highlights the urgency of addressing climate change impacts.
+
+Ultimately, this study underscores the importance of selecting an appropriate forecasting model to accurately interpret and predict climate dynamics. By successfully identifying and employing the ARIMA(1,1,3) model, we have provided a valuable tool for future climate research and policy planning. The forecasts generated from this model will aid in crafting strategies to mitigate the adverse effects of rising global temperatures, thereby contributing to more informed and effective environmental governance.
+
+## Reference:
+
+RMIT University. (2024). Course materials for MATH1318 Time Series Analysis. Master of Analytics Program, STEM.
+
+‘Climate at a Glance | Global Time Series | National Centers for Environmental Information (NCEI)’, viewed 19 May 2024, <https://www.ncei.noaa.gov/access/monitoring/climate-at-a-glance/global/time-series/globe/land/ytd/12/1850-2023?trend=true&trend_base=10&begtrendyear=1850&endtrendyear=2023>.
+
